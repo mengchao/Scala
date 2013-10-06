@@ -79,13 +79,13 @@ abstract class TweetSet {
    */
   def descendingByRetweet: TweetList = {
     def descendingByRetweetFromSet(tweetSet: TweetSet) : TweetList = {
-        if(tweetSet.isEmpty) {
-          Nil
-        }
-        else {
-          val mostRetweetedTweet = tweetSet.mostRetweeted
-          new Cons(mostRetweetedTweet, descendingByRetweetFromSet(tweetSet.remove(mostRetweetedTweet)))
-        }
+      if(tweetSet.isEmpty) {
+        Nil
+      }
+      else {
+        val mostRetweetedTweet = tweetSet.mostRetweeted
+        new Cons(mostRetweetedTweet, descendingByRetweetFromSet(tweetSet.remove(mostRetweetedTweet)))
+      }
     }
     descendingByRetweetFromSet(this)
   }
