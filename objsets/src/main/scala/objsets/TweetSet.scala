@@ -79,7 +79,7 @@ abstract class TweetSet {
    */
   def descendingByRetweet: TweetList = {
     def descendingByRetweetFromSet(tweetSet: TweetSet) : TweetList = {
-        if(tweetSet.isInstanceOf[Empty]) {
+        if(tweetSet.isEmpty) {
           Nil
         }
         else {
@@ -89,6 +89,8 @@ abstract class TweetSet {
     }
     descendingByRetweetFromSet(this)
   }
+  
+  def isEmpty: Boolean
 
 
   /**
@@ -126,6 +128,8 @@ class Empty extends TweetSet {
   def union(that: TweetSet): TweetSet = that
   
   def mostRetweeted: Tweet = throw new java.util.NoSuchElementException
+  
+  def isEmpty: Boolean = true
 
   /**
    * The following methods are already implemented
@@ -145,11 +149,13 @@ class NonEmpty(elem: Tweet, left: TweetSet, right: TweetSet) extends TweetSet {
   def filterAcc(p: Tweet => Boolean, acc: TweetSet): TweetSet = 
     right.filterAcc(p, left.filterAcc(p, if(p(elem)) acc incl elem else acc))
 
-  def union(that: TweetSet): TweetSet = left union right union that incl elem
+  def union(that: TweetSet): TweetSet = {
+    filterAcc(t => true, that)
+  }
   
   def mostRetweeted: Tweet = {
     val remainElems = left union right
-    if (remainElems.isInstanceOf[Empty]) {
+    if (remainElems.isEmpty) {
       elem
     }
     else {
@@ -160,6 +166,8 @@ class NonEmpty(elem: Tweet, left: TweetSet, right: TweetSet) extends TweetSet {
            mostRetweetedInRemaining
     } 
   }
+  
+  def isEmpty: Boolean = false
 
   /**
    * The following methods are already implemented
