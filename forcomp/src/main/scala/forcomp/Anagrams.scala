@@ -86,7 +86,16 @@ object Anagrams {
    *  Note that the order of the occurrence list subsets does not matter -- the subsets
    *  in the example above could have been displayed in some other order.
    */
-  def combinations(occurrences: Occurrences): List[Occurrences] = ???
+  def combinations(occurrences: Occurrences): List[Occurrences] = {
+    if (occurrences.length == 0) List(Nil)
+    else {
+      val (currChar, currOccurs) = occurrences.head
+      for {
+        occurs <- combinations(occurrences.tail)
+        occurCount <- 0 to currOccurs
+      } yield (if (occurCount == 0) occurs else (currChar, occurCount) :: occurs) 
+    }.toList
+  }
 
   /** Subtracts occurrence list `y` from occurrence list `x`.
    * 
@@ -98,7 +107,12 @@ object Anagrams {
    *  Note: the resulting value is an occurrence - meaning it is sorted
    *  and has no zero-entries.
    */
-  def subtract(x: Occurrences, y: Occurrences): Occurrences = ???
+  def subtract(x: Occurrences, y: Occurrences): Occurrences = y.foldLeft(x)(subtractOccurs)
+  
+  private def subtractOccurs(x: Occurrences, charOccurs: (Char, Int)): Occurrences = {
+    val (char, occurs) = charOccurs
+    x map {elem => if (elem._1 == char) (char, elem._2 - occurs) else elem} filter (_._2 > 0)
+  }
 
   /** Returns a list of all anagram sentences of the given sentence.
    *  
@@ -140,6 +154,17 @@ object Anagrams {
    *
    *  Note: There is only one anagram of an empty sentence.
    */
-  def sentenceAnagrams(sentence: Sentence): List[Sentence] = ???
-
+  def sentenceAnagrams(sentence: Sentence): List[Sentence] = anagramsFromOccurs(sentenceOccurrences(sentence))
+  
+  private def anagramsFromOccurs(occurrences: Occurrences): List[Sentence] = {
+    if (occurrences.length == 0) List(Nil)
+    else {
+      for {
+        selectedWord <- combinations(occurrences)
+        wordComb <- dictionaryByOccurrences(selectedWord)
+        remainingWordComb <- anagramsFromOccurs(subtract(occurrences, selectedWord))
+        if dictionaryByOccurrences.contains(selectedWord) 
+      } yield wordComb :: remainingWordComb
+    }.toList
+  }
 }
