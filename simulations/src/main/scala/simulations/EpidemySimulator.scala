@@ -83,29 +83,11 @@ class EpidemySimulator extends Simulator {
     }  
     
     def move: Unit = {
-      if (!dead) {
-        val moveDirection: Int = randomBelow(4)
-        if (moveDirection == 0) {
-          row += 1
-          if (row >= roomRows)
-             row = 0
-        }  
-        else if (moveDirection == 1) {
-          row -= 1
-          if (row < 0)
-            row = roomRows - 1
-        }
-        else if (moveDirection == 2) {
-          col += 1
-          if (col >= roomColumns)
-            col = 0
-        }
-        else {
-          col -= 1
-          if (col < 0) {
-            col = roomColumns - 1
-          }
-        }
+      val nextRooms = getAvailDirections.toArray
+      if (!dead && nextRooms.length > 0) {
+        val room = nextRooms(randomBelow(nextRooms.length))
+        row = room._1
+        col = room._2
         if (persons.filter(p => (p.row == row && p.col == col)).exists(p => p.infected)) {
           if (random < transmissibility) {
             if (!infected && !sick && !immune && !dead)
@@ -116,6 +98,17 @@ class EpidemySimulator extends Simulator {
       }
     }
     
-    
+    def getAvailDirections = {
+      val upRow = if (row + 1 >= roomRows) 0 else row + 1
+      val downRow = if (row - 1 < 0) roomRows - 1 else row - 1
+      val leftCol = if (col + 1 >= roomColumns) 0 else col + 1
+      val rightCol = if (col - 1 < 0) roomColumns - 1 else col - 1
+      val nextRoom = List((upRow, col), (downRow, col), (row, leftCol), (row, rightCol))
+      val nextRoomWithoutSick = nextRoom filter {
+        case (rowId, colId) => 
+          !persons.filter(p => (p.row == rowId && p.col == colId)).exists(p => p.sick)
+      }
+      nextRoomWithoutSick
+    }
   }
 }
