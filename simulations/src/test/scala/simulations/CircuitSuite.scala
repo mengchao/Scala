@@ -70,12 +70,20 @@ class CircuitSuite extends CircuitSimulator with FunSuite {
     val c = (new Wire) :: (new Wire) :: Nil
     val out = (new Wire) :: (new Wire) :: (new Wire) :: (new Wire) :: Nil
     demux(in, c, out)
-    
+
     in.setSignal(true)
     run
+
     assert(out(3).getSignal === true, "demux 1")
     
-
+    c(1).setSignal(true)
+    run
+    
+    assert(out(2).getSignal === true, "demux 2")
+    
+    c(0).setSignal(true)
+    run
+    assert(out(0).getSignal === true, "demux 3")
     
   }
 }

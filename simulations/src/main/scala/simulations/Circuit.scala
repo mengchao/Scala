@@ -78,16 +78,17 @@ abstract class CircuitSimulator extends Simulator {
 
   def demux(in: Wire, c: List[Wire], out: List[Wire]) {
     def demuxAction() {
-      for (i <- 0 until out.length)
-        out(i).setSignal(false)
-      if (in.getSignal == false) {
-        // out with all elements false 
-      } else if (c == List()) {
-        out(0).setSignal(true)
-      } else if (!c.head.getSignal) {
-        demux(in, c.tail, out.slice(out.length / 2 + 1, out.length))
+      if (c == List()) {
+        val wire = new Wire
+        andGate(in, out(0), wire)
+        orGate(in, wire, out(0))
       } else {
-        demux(in, c.tail, out.slice(0, out.length / 2))
+        val headAndIn, headInv, headInvAndIn = new Wire
+        inverter(c.head, headInv)
+        andGate(c.head, in, headAndIn)
+        andGate(headInv, in, headInvAndIn)
+        demux(headAndIn, c.tail, out.slice(0, out.length / 2))
+        demux(headInvAndIn, c.tail, out.slice(out.length / 2, out.length))
       }
     }
     in addAction demuxAction
