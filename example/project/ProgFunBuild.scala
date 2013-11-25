@@ -138,7 +138,7 @@ object ProgFunBuild extends Build {
                 |  submit <e-mail> <submissionPassword>
                 |
                 |The submission password, which is NOT YOUR LOGIN PASSWORD, can be obtained from the assignment page
-                |  https://class.coursera.org/%s/assignment/index""".format(details.courseId).stripMargin +"\n "
+                |  https:/%s/assignment/index""".format(details.courseId).stripMargin + "\n"
             s.log.error(msg)
             failSubmit()
         }
@@ -195,11 +195,13 @@ object ProgFunBuild extends Build {
           if (handoutProjectName != submitProject)
             sys.error("\nThe `submitProjectName` setting in `build.sbt` must match the project name for which a handout is generated\n ")
           val files = filesFinder(handoutProjectName).get
-          val filesWithRelativeNames = files.x_!(relativeTo(basedir)) map {
+          def withRelativeNames(fs: Seq[File]) = fs.x_!(relativeTo(basedir)) map {
             case (file, name) => (file, handoutProjectName+"/"+name)
           }
+          val filesWithRelativeNames = withRelativeNames(files)
+          val manualDepsWithRelativeNames = withRelativeNames(IO.listFiles(basedir / "lib"))
           val targetZip = targetDir / (handoutProjectName +".zip")
-          IO.zip(filesWithRelativeNames, targetZip)
+          IO.zip(filesWithRelativeNames ++ manualDepsWithRelativeNames, targetZip)
           targetZip
         case _ =>
           val msg ="""
@@ -348,7 +350,9 @@ object ProgFunBuild extends Build {
     /** settings specific to the grading project */
     initGradingSetting,
     // default value, don't change. see comment on `val partIdOfGradingProject`
+    gradingUUID := "",
     partIdOfGradingProject := "",
+    gradingCourseId := "",
     gradeProjectDetailsSetting,
     setMaxScoreSetting,
     setMaxScoreHook,
@@ -372,11 +376,24 @@ object ProgFunBuild extends Build {
   )
 
   /**
+   * The assignment uuid that is used for uniquely connecting feedback to the logs.
+   */
+  val gradingUUID = SettingKey[String]("gradingUUID")
+
+  /**
    * The assignment part id of the project to be graded. Don't hard code this setting in .sbt or .scala, this
    * setting should remain a (command-line) parameter of the `submission/grade` task, defined when invoking sbt.
    * See also feedback string in "val gradeProjectDetailsSetting".
    */
   val partIdOfGradingProject = SettingKey[String]("partIdOfGradingProject")
+
+  /**
+   * she assignment part id of the project to be graded. Don't hard code this setting in .sbt or .scala, this
+   * setting should remain a (command-line) parameter of the `submission/grade` task, defined when invoking sbt.
+   * See also feedback string in "val gradeProjectDetailsSetting".
+   */
+  val gradingCourseId = SettingKey[String]("gradingCourseId")
+
 
   /**
    * The api key to access non-public api parts on coursera. This key is secret! It's defined in
@@ -415,10 +432,10 @@ object ProgFunBuild extends Build {
   val gradeProjectDetails = TaskKey[ProjectDetails]("gradeProjectDetails")
 
   // here we depend on `initialize` because we already use the GradingFeedback
-  lazy val gradeProjectDetailsSetting = gradeProjectDetails <<= (initGrading, partIdOfGradingProject, projectDetailsMap in assignmentProject) map { (_, partId, detailsMap) =>
+  lazy val gradeProjectDetailsSetting = gradeProjectDetails <<= (initGrading, gradingCourseId, partIdOfGradingProject, projectDetailsMap in assignmentProject) map { (_, gradingCourseId, partId, detailsMap) =>
     detailsMap.find(_._2.assignmentPartId == partId) match {
       case Some((_, details)) =>
-        details
+        details.copy(courseId = gradingCourseId)
       case None =>
         val validIds = detailsMap.map(_._2.assignmentPartId)
         val msgRaw =
@@ -610,19 +627,27 @@ object ProgFunBuild extends Build {
   val grade = TaskKey[Unit]("grade")
 
   // mapR: submit the grade / feedback in any case, also on failure
-  val gradeSetting = grade <<= (scalaTestSubmission, styleCheckSubmission, apiKey, gradeProjectDetails, streams) mapR { (_, _, apiKeyR, projectDetailsR, s) =>
+  val gradeSetting = grade <<= (gradingUUID, scalaTestSubmission, styleCheckSubmission, apiKey, gradeProjectDetails, streams) mapR { (uuidR, _, _, apiKeyR, projectDetailsR, s) =>
+    val Value(uuid) = uuidR
     val logOpt = s match {
       case Value(v) => Some(v.log)
       case _ => None
     }
-    logOpt.foreach(_.info(GradingFeedback.feedbackString(html = false)))
+    logOpt.foreach(_.info(GradingFeedback.feedbackString(uuid, html = false)))
+    val Value(projectDetails) = projectDetailsR
     apiKeyR match {
       case Value(apiKey) if (!apiKey.isEmpty) =>
+        val apiKeyAugmented = apiKey + (projectDetails.courseId match { // OMG what a hack!!!
+          case "progfun-epfl-001" => "-epfl"
+          case "reactive-001" => "-react"
+          case "progfun-003" => ""
+        })
+        logOpt.foreach(_.debug("Course Id for submission: " + projectDetails.courseId))
+        logOpt.foreach(_.debug("Corresponding API key: " + apiKeyAugmented))
         // if build failed early, we did not even get the api key from the submission queue
         if (!GradingFeedback.apiState.isEmpty && !Settings.offlineMode) {
           val scoreString = "%.2f".format(GradingFeedback.totalScore)
-          val Value(projectDetails) = projectDetailsR
-          CourseraHttp.submitGrade(GradingFeedback.feedbackString(), scoreString, GradingFeedback.apiState, apiKey, projectDetails) match {
+          CourseraHttp.submitGrade(GradingFeedback.feedbackString(uuid), scoreString, GradingFeedback.apiState, apiKeyAugmented, projectDetails, logOpt) match {
             case Failure(msgs) =>
               sys.error(msgs.list.mkString("\n"))
             case _ =>
