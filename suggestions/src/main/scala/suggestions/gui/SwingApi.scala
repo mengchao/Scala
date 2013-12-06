@@ -70,11 +70,11 @@ trait SwingApi {
      * @return an observable with a stream of buttons that have been clicked
      */
     def clicks: Observable[Button] = {
-      val channel = PublishSubject[Button](button)
+      val subject = PublishSubject[Button](button)
       button subscribe {
-        case ButtonClicked(bt) => channel.onNext(bt)
+        case ButtonClicked(bt) => subject.onNext(bt)
       }
-      channel
+      subject
     }
 
   }
