@@ -11,6 +11,7 @@ import scala.swing.Reactions.Reaction
 import scala.swing.event.Event
 import rx.lang.scala.Observable
 import rx.lang.scala.subjects.PublishSubject
+import scala.swing.Reactions
 
 /** Basic facilities for dealing with Swing-like components.
 *
@@ -36,13 +37,11 @@ trait SwingApi {
 
   type TextField <: {
     def text: String
-    def subscribe(r: Reaction): Unit
-    def unsubscribe(r: Reaction): Unit
+    def reactions: Reactions
   }
 
   type Button <: {
-    def subscribe(r: Reaction): Unit
-    def unsubscribe(r: Reaction): Unit
+    def reactions: Reactions
   }
 
   implicit class TextFieldOps(field: TextField) {
@@ -54,8 +53,9 @@ trait SwingApi {
       */
     def textValues: Observable[String] = {
       val channel = PublishSubject[String](field.text)
-      field subscribe {
+      field.reactions += {
         case ValueChanged(tf) => channel.onNext(tf.text)
+        case _ => ???
       }
       channel
     }
@@ -71,8 +71,9 @@ trait SwingApi {
      */
     def clicks: Observable[Button] = {
       val subject = PublishSubject[Button](button)
-      button subscribe {
+      button.reactions += {
         case ButtonClicked(bt) => subject.onNext(bt)
+        case _ => ???
       }
       subject
     }

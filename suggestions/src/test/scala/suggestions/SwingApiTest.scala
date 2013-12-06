@@ -11,9 +11,9 @@ import scala.swing.Reactions.Reaction
 import rx.lang.scala._
 import org.scalatest._
 import gui._
-
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
+import scala.swing.Reactor
 
 @RunWith(classOf[JUnitRunner])
 class SwingApiTest extends FunSuite {
@@ -50,18 +50,18 @@ class SwingApiTest extends FunSuite {
       }
     }
 
-    class TextField extends Component {
+    class TextField extends Reactor {
       private var _text = ""
       def text = _text
       def text_=(t: String) {
         _text = t
-        publish(new ValueChanged(this))
+        reactions(new ValueChanged(this))
       }
     }
 
-    class Button extends Component {
+    class Button extends Reactor {
       def click() {
-        publish(new ButtonClicked(this))
+        reactions(new ButtonClicked(this))
       }
     }
   }
