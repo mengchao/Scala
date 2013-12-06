@@ -97,7 +97,11 @@ object WikipediaSuggest extends SimpleSwingApplication with ConcreteSwingApi wit
 
     // TO IMPLEMENT
     val selections: Observable[String] = button.clicks.map(button => {
-        suggestionList.selection.items.toString
+        val items = suggestionList.selection.items
+        if(items.length > 0)
+          items(0)
+        else
+          ""
       }
     ).filter(_ != "")
 

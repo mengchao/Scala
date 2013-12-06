@@ -13,7 +13,6 @@ import org.scalatest._
 import gui._
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
-import scala.swing.Reactor
 
 @RunWith(classOf[JUnitRunner])
 class SwingApiTest extends FunSuite {
@@ -50,18 +49,18 @@ class SwingApiTest extends FunSuite {
       }
     }
 
-    class TextField extends Reactor {
+    class TextField extends Component {
       private var _text = ""
       def text = _text
       def text_=(t: String) {
         _text = t
-        reactions(new ValueChanged(this))
+        publish(new ValueChanged(this))
       }
     }
 
-    class Button extends Reactor {
+    class Button extends Component {
       def click() {
-        reactions(new ButtonClicked(this))
+        publish(new ButtonClicked(this))
       }
     }
   }
