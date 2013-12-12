@@ -69,8 +69,9 @@ class BinaryTreeSet extends Actor {
   val normal: Receive = {
     case msg: Operation => root forward msg
     case GC => {
-      root ! CopyTo(self)
-      context.become(garbageCollecting(createRoot))
+      val newRoot = createRoot
+      root ! CopyTo(newRoot)
+      context.become(garbageCollecting(newRoot))
     }
   }
 
@@ -81,11 +82,9 @@ class BinaryTreeSet extends Actor {
     */
   def garbageCollecting(newRoot: ActorRef): Receive = {
     case CopyFinished => {
-      val oldRoot = root
       root = newRoot
-      context.stop(oldRoot)
       pendingQueue foreach { op =>
-        root forward op
+        root tell (op, context.parent)
       }
       pendingQueue = Queue.empty[Operation]
       context.become(normal)
@@ -162,15 +161,42 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
         }
       }
     }
-    case CopyTo(treeNode) => ???
+    case CopyTo(treeNode) => {
+      if (!removed) {
+        treeNode ! Insert(self, -1, elem)
+      }
+      if (subtrees contains Left) {
+        subtrees(Left) ! CopyTo(treeNode)
+      }
+      else if (subtrees contains Right) {
+        subtrees(Right) ! CopyTo(treeNode)
+      }
+      checkCopyTaskComplete(subtrees.values.toSet, removed)
+    }
   }
 
   // optional
-  /** `expected` is the set of ActorRefs whose replies we are waiting for,
-    * `insertConfirmed` tracks whether the copy of this node to the new tree has been confirmed.
-    */
+  /**
+   * `expected` is the set of ActorRefs whose replies we are waiting for,
+   * `insertConfirmed` tracks whether the copy of this node to the new tree has been confirmed.
+   */
   def copying(expected: Set[ActorRef], insertConfirmed: Boolean): Receive = {
-    ???
+    case CopyFinished => {
+      checkCopyTaskComplete(expected.tail, insertConfirmed)
+    }
+    case OperationFinished(-1) => {
+      checkCopyTaskComplete(expected, true)
+    }
+  }
+
+  def checkCopyTaskComplete(expected: Set[ActorRef], insertConfirmed: Boolean) = {
+    if (expected == Set() && insertConfirmed) {
+      subtrees = Map[Position, ActorRef]()
+      context.parent ! CopyFinished
+      context.stop(self)
+    } else {
+      context.become(copying(expected, insertConfirmed))
+    }
   }
 
 }
