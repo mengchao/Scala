@@ -66,14 +66,35 @@ class BinaryTreeSet extends Actor {
 
   // optional
   /** Accepts `Operation` and `GC` messages. */
-  val normal: Receive = { case _ => ??? }
+  val normal: Receive = {
+    case msg: Operation => root forward msg
+    case GC => {
+      root ! CopyTo(self)
+      context.become(garbageCollecting(createRoot))
+    }
+  }
 
   // optional
   /** Handles messages while garbage collection is performed.
     * `newRoot` is the root of the new binary tree where we want to copy
     * all non-removed elements into.
     */
-  def garbageCollecting(newRoot: ActorRef): Receive = ???
+  def garbageCollecting(newRoot: ActorRef): Receive = {
+    case CopyFinished => {
+      val oldRoot = root
+      root = newRoot
+      context.stop(oldRoot)
+      pendingQueue foreach { op =>
+        root forward op
+      }
+      pendingQueue = Queue.empty[Operation]
+      context.become(normal)
+    }
+    case msg: Operation => {
+      pendingQueue = pendingQueue.enqueue(msg)
+    }
+    case GC => /* ignore GC request while in the process of GC */
+  }
 
 }
 
@@ -101,12 +122,55 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
 
   // optional
   /** Handles `Operation` messages and `CopyTo` requests. */
-  val normal: Receive = { case _ => ??? }
+  val normal: Receive = {
+    case Insert(requester, id, elem) => {
+      if (this.elem == elem) {
+        removed = false
+        requester ! OperationFinished(id)
+      } else {
+        val pos: Position = if (elem < this.elem) Left else Right
+        if (subtrees contains pos) {
+          subtrees(pos) forward Insert(requester, id, elem)
+        } else {
+          subtrees += ((pos, context.actorOf(props(elem, false))))
+          requester ! OperationFinished(id)
+        }
+      }
+    }
+    case Contains(requester, id, elem) => {
+      if (this.elem == elem) {
+        requester ! ContainsResult(id, !removed)
+      } else {
+        val pos: Position = if (elem < this.elem) Left else Right
+        if (subtrees contains pos) {
+          subtrees(pos) forward Contains(requester, id, elem)
+        } else {
+          requester ! ContainsResult(id, false)
+        }
+      }
+    }
+    case Remove(requester, id, elem) => {
+      if (this.elem == elem) {
+        removed = true
+        requester ! OperationFinished(id)
+      } else {
+        val pos: Position = if (elem < this.elem) Left else Right
+        if (subtrees contains pos) {
+          subtrees(pos) forward Remove(requester, id, elem)
+        } else {
+          requester ! OperationFinished(id)
+        }
+      }
+    }
+    case CopyTo(treeNode) => ???
+  }
 
   // optional
   /** `expected` is the set of ActorRefs whose replies we are waiting for,
     * `insertConfirmed` tracks whether the copy of this node to the new tree has been confirmed.
     */
-  def copying(expected: Set[ActorRef], insertConfirmed: Boolean): Receive = ???
+  def copying(expected: Set[ActorRef], insertConfirmed: Boolean): Receive = {
+    ???
+  }
 
 }
