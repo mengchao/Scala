@@ -82,11 +82,13 @@ class BinaryTreeSet extends Actor {
     */
   def garbageCollecting(newRoot: ActorRef): Receive = {
     case CopyFinished => {
+      val oldRoot = root
       root = newRoot
       pendingQueue foreach { op =>
         root tell (op, context.parent)
       }
       pendingQueue = Queue.empty[Operation]
+      context.stop(oldRoot)
       context.become(normal)
     }
     case msg: Operation => {
@@ -193,7 +195,6 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
     if (expected == Set() && insertConfirmed) {
       subtrees = Map[Position, ActorRef]()
       context.parent ! CopyFinished
-      context.stop(self)
     } else {
       context.become(copying(expected, insertConfirmed))
     }
