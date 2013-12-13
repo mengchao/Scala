@@ -88,11 +88,11 @@ class BinaryTreeSet extends Actor {
         root tell (op, context.parent)
       }
       pendingQueue = Queue.empty[Operation]
-      context.stop(oldRoot)
+      oldRoot ! akka.actor.PoisonPill
       context.become(normal)
     }
-    case msg: Operation => {
-      pendingQueue = pendingQueue.enqueue(msg)
+    case request: Operation => {
+      pendingQueue = pendingQueue :+ request
     }
     case GC => /* ignore GC request while in the process of GC */
   }
@@ -167,12 +167,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
       if (!removed) {
         treeNode ! Insert(self, -1, elem)
       }
-      if (subtrees contains Left) {
-        subtrees(Left) ! CopyTo(treeNode)
-      }
-      else if (subtrees contains Right) {
-        subtrees(Right) ! CopyTo(treeNode)
-      }
+      subtrees.values.foreach(_ ! CopyTo(treeNode))
       checkCopyTaskComplete(subtrees.values.toSet, removed)
     }
   }
@@ -192,7 +187,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
   }
 
   def checkCopyTaskComplete(expected: Set[ActorRef], insertConfirmed: Boolean) = {
-    if (expected == Set() && insertConfirmed) {
+    if (expected.isEmpty && insertConfirmed) {
       subtrees = Map[Position, ActorRef]()
       context.parent ! CopyFinished
     } else {
