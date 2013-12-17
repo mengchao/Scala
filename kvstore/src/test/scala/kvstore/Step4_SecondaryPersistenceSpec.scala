@@ -11,6 +11,10 @@ import scala.concurrent.duration._
 import Arbiter._
 import Persistence._
 
+import org.junit.runner.RunWith  
+import org.scalatest.junit.JUnitRunner
+
+@RunWith(classOf[JUnitRunner])
 class Step4_SecondaryPersistenceSpec extends TestKit(ActorSystem("Step4SecondaryPersistenceSpec"))
   with FunSuite
   with BeforeAndAfterAll

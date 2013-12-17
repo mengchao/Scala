@@ -12,6 +12,10 @@ import Arbiter._
 import Persistence._
 import Replicator._
 
+import org.junit.runner.RunWith  
+import org.scalatest.junit.JUnitRunner
+
+@RunWith(classOf[JUnitRunner])
 class Step5_PrimaryPersistenceSpec extends TestKit(ActorSystem("Step5PrimaryPersistenceSpec"))
   with FunSuite
   with BeforeAndAfterAll

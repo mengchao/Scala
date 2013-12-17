@@ -10,6 +10,10 @@ import akka.testkit.TestProbe
 import Arbiter._
 import Replicator._
 
+import org.junit.runner.RunWith  
+import org.scalatest.junit.JUnitRunner
+
+@RunWith(classOf[JUnitRunner])
 class Step6_NewSecondarySpec extends TestKit(ActorSystem("Step6NewSecondarySpec"))
   with FunSuite
   with BeforeAndAfterAll
