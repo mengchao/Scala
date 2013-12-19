@@ -45,6 +45,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var secondaries = Map.empty[ActorRef, ActorRef]
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
+  // the current expected seq sent from Replicator (for Secondary Replica)
+  var currentExpectedSeq = 0
   
   arbiter ! Join
 
@@ -71,6 +73,23 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   /* TODO Behavior for the replica role. */
   val replica: Receive = {
+    case Snapshot(key, valueOption, seq) => {
+      if (seq > currentExpectedSeq) {
+        /* ignore, no state change and no reaction */
+      } else {
+        if (seq == currentExpectedSeq) {
+          valueOption match {
+            case Some(value) => kv = kv.updated(key, value)
+            case None => kv -= key
+          }
+          currentExpectedSeq += 1
+        }
+        sender ! SnapshotAck(key, seq)
+      }
+    }
+    case Get(key, id) => {
+      sender ! GetResult(key, kv.get(key), id)
+    }
     case _ =>
   }
 
