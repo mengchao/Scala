@@ -23,6 +23,8 @@ class Replicator(val replica: ActorRef) extends Actor {
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
+  
+  case class TimeOut(seq: Long)
 
   // map from sequence number to pair of sender and request
   var acks = Map.empty[Long, (ActorRef, Replicate)]
@@ -38,7 +40,27 @@ class Replicator(val replica: ActorRef) extends Actor {
   
   /* TODO Behavior for the Replicator. */
   def receive: Receive = {
-    case _ =>
+    case Replicate(key, valueOption, id) => {
+      val seq = nextSeq
+      val client = sender
+      replica ! Snapshot(key, valueOption, seq)
+      acks = acks.updated(seq, (sender, Replicate(key, valueOption, id)))
+      context.system.scheduler.scheduleOnce(200 milliseconds, self, TimeOut(seq))
+    }
+    case SnapshotAck(key, seq) => {
+      if (acks.contains(seq)) {
+        val (client, Replicate(key, valueOption, id)) = acks(seq)
+        client ! Replicated(key, id)
+        acks -= seq
+      }
+    }
+    case TimeOut(seq) => {
+      if (acks.contains(seq)) {
+        val (client, Replicate(key, valueOption, id)) = acks(seq)
+        replica ! Snapshot(key, valueOption, seq)
+        context.system.scheduler.scheduleOnce(200 milliseconds, self, TimeOut(seq))
+      }
+    }
   }
 
 }
