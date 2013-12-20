@@ -39,6 +39,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
+  case class PersistenceTimeOut(seq: Long, nbrOfTimes: Int, persistenceRequest: Persist)
   
   var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
@@ -47,6 +48,14 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var replicators = Set.empty[ActorRef]
   // the current expected seq sent from Replicator (for Secondary Replica)
   var currentExpectedSeq = 0
+  // map from sequence number to pair of sender and response
+  var pendingPersistenceAcks = Map.empty[Long, (ActorRef, Object, Object)]
+  
+  override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries = 5) {
+    case _: Exception =>  {SupervisorStrategy.Restart}
+  }
+
+  var persistence = context.actorOf(persistenceProps)
   
   arbiter ! Join
 
@@ -59,16 +68,21 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   val leader: Receive = {
     case Insert(key, value, id) => {
       kv = kv.updated(key, value)
-      sender ! OperationAck(id)
+      pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
+          (sender, OperationAck(id), OperationFailed(id)))
+      self ! PersistenceTimeOut(id, 0, Persist(key, Some(value), id))
     }
     case Remove(key, id) => {
       kv -= key
-      sender ! OperationAck(id)
+      pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
+          (sender, OperationAck(id), OperationFailed(id)))
+      self ! PersistenceTimeOut(id, 0, Persist(key, None, id))
     }
-    case Get(key, id) => {
-      sender ! GetResult(key, kv.get(key), id)
-    }
-    case _ =>
+    case Get(key, id) => onGet(key, id)
+    case Terminated(_) => onTerminated
+    case Persisted(key, id) => onPersistenceCompleted(key, id)
+    case PersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
+      => onPersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
   }
 
   /* TODO Behavior for the replica role. */
@@ -84,13 +98,50 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
           }
           currentExpectedSeq += 1
         }
-        sender ! SnapshotAck(key, seq)
+        pendingPersistenceAcks =
+          pendingPersistenceAcks.updated(seq, (sender, SnapshotAck(key, seq), null))
+        self ! PersistenceTimeOut(seq, 0, Persist(key, valueOption, seq))
       }
     }
-    case Get(key, id) => {
-      sender ! GetResult(key, kv.get(key), id)
-    }
-    case _ =>
+    case Get(key, id) => onGet(key, id)
+    case Terminated(_) => onTerminated
+    case Persisted(key, id) => onPersistenceCompleted(key, id)
+    case PersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
+      => onPersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
   }
-
+  
+  def onGet(key: String, id: Long): Unit = {
+    sender ! GetResult(key, kv.get(key), id)
+  }
+  
+  def onTerminated: Unit = {
+    context.stop(persistence)
+    persistence = context.actorOf(persistenceProps)    
+  }
+  
+  def onPersistenceCompleted(key: String, id: Long): Unit = {
+    if (pendingPersistenceAcks.contains(id)) {
+      val (sender, ack, failResponse) = pendingPersistenceAcks(id)
+      pendingPersistenceAcks -= id
+      sender ! ack
+    }
+  }
+  
+  def onPersistenceTimeOut(id: Long, nbrOfTimes: Int,
+                           persistenceRequest: Persist): Unit = {
+    if (pendingPersistenceAcks.contains(id)) {
+      val (sender, ack, failResponse) = pendingPersistenceAcks(id)
+      if (nbrOfTimes >= 9) {
+        pendingPersistenceAcks -= id
+        if (failResponse != null) {
+          sender ! failResponse
+        }
+      }
+      else {
+        persistence ! persistenceRequest
+        context.system.scheduler.scheduleOnce(100 milliseconds, self, 
+            PersistenceTimeOut(id, nbrOfTimes + 1, persistenceRequest))
+      }
+    }
+  }
 }

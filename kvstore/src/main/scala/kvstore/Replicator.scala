@@ -29,7 +29,7 @@ class Replicator(val replica: ActorRef) extends Actor {
   // map from sequence number to pair of sender and request
   var acks = Map.empty[Long, (ActorRef, Replicate)]
   // a sequence of not-yet-sent snapshots (you can disregard this if not implementing batching)
-  var pending = Vector.empty[Snapshot]
+  // var pending = Vector.empty[Snapshot]
   
   var _seqCounter = 0L
   def nextSeq = {
@@ -42,7 +42,6 @@ class Replicator(val replica: ActorRef) extends Actor {
   def receive: Receive = {
     case Replicate(key, valueOption, id) => {
       val seq = nextSeq
-      val client = sender
       replica ! Snapshot(key, valueOption, seq)
       acks = acks.updated(seq, (sender, Replicate(key, valueOption, id)))
       context.system.scheduler.scheduleOnce(200 milliseconds, self, TimeOut(seq))
