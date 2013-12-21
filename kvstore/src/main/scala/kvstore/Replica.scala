@@ -12,6 +12,7 @@ import akka.actor.PoisonPill
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
 import akka.util.Timeout
+import scala.language.postfixOps
 
 object Replica {
   sealed trait Operation {
@@ -50,7 +51,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current expected seq sent from Replicator (for Secondary Replica)
   var currentExpectedSeq = 0
   // map from sequence number to pair of sender and response
-  var pendingPersistenceAcks = Map.empty[Long, (ActorRef, Object, Object)]
+  var pendingPersistenceAcks = Map.empty[Long, (ActorRef, Object, Option[Object])]
   // map from sequence number to pair of sender and child replicators
   var pendingReplicationAcks = Map.empty[Long, (ActorRef, Set[ActorRef])]
   
@@ -92,7 +93,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Insert(key, value, id) => {
       kv = kv.updated(key, value)
       pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
-          (sender, OperationAck(id), ReplyIfOperationFailed(sender, id)))
+          (sender, OperationAck(id), Some(ReplyIfOperationFailed(sender, id))))
       replicators = secondaries.values.toSet
       if (!replicators.isEmpty)
       {
@@ -106,7 +107,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Remove(key, id) => {
       kv -= key
       pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
-          (sender, OperationAck(id), ReplyIfOperationFailed(sender, id)))
+          (sender, OperationAck(id), Some(ReplyIfOperationFailed(sender, id))))
       replicators = secondaries.values.toSet
       if (!replicators.isEmpty)
       {
@@ -147,7 +148,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
           currentExpectedSeq += 1
         }
         pendingPersistenceAcks =
-          pendingPersistenceAcks.updated(seq, (sender, SnapshotAck(key, seq), null))
+          pendingPersistenceAcks.updated(seq, (sender, SnapshotAck(key, seq), None))
         self ! PersistenceTimeOut(seq, 0, Persist(key, valueOption, seq))
       }
     }
@@ -187,10 +188,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     if (pendingPersistenceAcks.contains(id)) {
       val (client, ack, failResponse) = pendingPersistenceAcks(id)
       if (nbrOfTimes >= 9) {
-        if (failResponse != null) {
-          client ! failResponse
-        } else {
-          pendingPersistenceAcks -= id
+        failResponse match {
+          case Some(reponse) => client ! failResponse
+          case None => pendingPersistenceAcks -= id
         }
       }
       else {
