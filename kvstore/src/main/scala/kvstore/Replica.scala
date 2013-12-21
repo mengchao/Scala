@@ -42,6 +42,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
    */
   case class PersistenceTimeOut(seq: Long, nbrOfTimes: Int, persistenceRequest: Persist)
   case class ReplyIfOperationFailed(client: ActorRef, id: Long)
+  case class HistoricalSnapshot(key: String, valueBefore: Option[String], id: Long)
   
   var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
@@ -54,6 +55,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var pendingPersistenceAcks = Map.empty[Long, (ActorRef, Object, Option[Object])]
   // map from sequence number to pair of sender and child replicators
   var pendingReplicationAcks = Map.empty[Long, (ActorRef, Set[ActorRef])]
+  
+  var historicalSnapshots = Vector.empty[HistoricalSnapshot]
   
   var isPrimary = false
   
@@ -91,6 +94,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       stopRemovedReplicators(removedReplicators)
     }
     case Insert(key, value, id) => {
+      historicalSnapshots = historicalSnapshots :+ HistoricalSnapshot(key, kv.get(key), id)
       kv = kv.updated(key, value)
       pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
           (sender, OperationAck(id), Some(ReplyIfOperationFailed(sender, id))))
@@ -105,6 +109,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
           ReplyIfOperationFailed(sender, id))
     }
     case Remove(key, id) => {
+      historicalSnapshots = historicalSnapshots :+ HistoricalSnapshot(key, kv.get(key), id)
       kv -= key
       pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
           (sender, OperationAck(id), Some(ReplyIfOperationFailed(sender, id))))
@@ -130,6 +135,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       if (!isUpdateOnPrimaryReplicaSucceed(id)) {
         pendingPersistenceAcks -= id
         pendingReplicationAcks -= id
+        restoreValueForFailedOperation(id)
         client ! OperationFailed(id)
       }
     }
@@ -141,6 +147,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         /* ignore, no state change and no reaction */
       } else {
         if (seq == currentExpectedSeq) {
+          historicalSnapshots = historicalSnapshots :+ HistoricalSnapshot(key, kv.get(key), seq)
           valueOption match {
             case Some(value) => kv = kv.updated(key, value)
             case None => kv -= key
@@ -174,6 +181,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       pendingPersistenceAcks -= id
       if (!isPrimary || isUpdateOnPrimaryReplicaSucceed(id)) {
         client ! ack
+        clearSucceedHistoricalSnapshots(id)
       }
     }
   }
@@ -189,8 +197,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       val (client, ack, failResponse) = pendingPersistenceAcks(id)
       if (nbrOfTimes >= 9) {
         failResponse match {
-          case Some(reponse) => client ! failResponse
-          case None => pendingPersistenceAcks -= id
+          case Some(reponse) => {
+            client ! failResponse
+          }
+          case None => {
+            pendingPersistenceAcks -= id
+            restoreValueForFailedOperation(id)
+          }
         }
       }
       else {
@@ -235,10 +248,39 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         pendingReplicationAcks -= id
         if (isUpdateOnPrimaryReplicaSucceed(id)) {
           client ! OperationAck(id)
+          clearSucceedHistoricalSnapshots(id)
         }
       } else {
         pendingReplicationAcks = pendingReplicationAcks.updated(id, (client, newPendingRepAcks))
       }
     }    
+  }
+  
+  def clearSucceedHistoricalSnapshots(opId: Long) = {
+    discardOutDatedSnapshots(opId, false)
+  }
+  
+  def restoreValueForFailedOperation(opId: Long) = {
+    discardOutDatedSnapshots(opId, true)
+  }
+  
+  def discardOutDatedSnapshots(opId: Long, 
+                               restoreSnapshotValueBefore: Boolean) = {
+    val currentSnapshots = historicalSnapshots.filter(_.id == opId)
+    if (!currentSnapshots.isEmpty) {
+      val currentSnapShot = currentSnapshots(0)
+      currentSnapShot match {
+        case HistoricalSnapshot(key, valueBefore, id) => {
+          historicalSnapshots = historicalSnapshots.filterNot(s => s.key == key
+            && s.id <= id)
+          if (restoreSnapshotValueBefore) {
+            valueBefore match {
+              case Some(value) => kv = kv.updated(key, value)
+              case None => kv -= key
+            }
+          }
+        }
+      }
+    }
   }
 }
