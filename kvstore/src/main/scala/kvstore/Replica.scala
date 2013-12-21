@@ -139,6 +139,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         client ! OperationFailed(id)
       }
     }
+    case _ =>
   }
 
   val replica: Receive = {
@@ -198,7 +199,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       if (nbrOfTimes >= 9) {
         failResponse match {
           case Some(reponse) => {
-            client ! failResponse
+            self ! failResponse
           }
           case None => {
             pendingPersistenceAcks -= id
@@ -275,8 +276,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             && s.id <= id)
           if (restoreSnapshotValueBefore) {
             valueBefore match {
-              case Some(value) => kv = kv.updated(key, value)
-              case None => kv -= key
+              case Some(value) => self ! Insert(key, value, -1)
+              case None => self ! Remove(key, -1)
             }
           }
         }
