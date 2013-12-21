@@ -77,9 +77,17 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   val leader: Receive = {
     case Replicas(replicas) => {
+      val oldReplicators = secondaries.values.toSet
+      secondaries = Map.empty[ActorRef, ActorRef]
       replicas filter(_  != self) foreach ( replica =>
-        secondaries = secondaries.updated(replica, context.actorOf(Replicator.props(replica)))
+        secondaries += ((replica, context.actorOf(Replicator.props(replica))))
       )
+      replicators = secondaries.values.toSet
+      val removedReplicators = oldReplicators.filter(!replicators.contains(_))
+      val addedReplicators = replicators.filter(!oldReplicators.contains(_))
+      replicateToNewAddedReplicas(addedReplicators)
+      removeReplicasFromPendingList(removedReplicators)
+      stopRemovedReplicators(removedReplicators)
     }
     case Insert(key, value, id) => {
       kv = kv.updated(key, value)
@@ -115,20 +123,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case PersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
       => onPersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
     case Replicated(key, id) => {
-      if (pendingReplicationAcks.contains(id)
-          && pendingReplicationAcks(id)._2.contains(sender)) {
-        val (client, pendingRepAcks) = pendingReplicationAcks(id)
-        val newPendingRepAcks = pendingRepAcks - sender
-        if (newPendingRepAcks.isEmpty) {
-          pendingReplicationAcks -= id
-          if (isUpdateOnPrimaryReplicaSucceed(id)) {
-            client ! OperationAck(id)
-          }
-        } else {
-          pendingReplicationAcks 
-            = pendingReplicationAcks.updated(id, (client, newPendingRepAcks))
-        }
-      }
+      onReplicated(id, sender)
     }
     case ReplyIfOperationFailed(client, id) => {
       if (!isUpdateOnPrimaryReplicaSucceed(id)) {
@@ -204,5 +199,46 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             PersistenceTimeOut(id, nbrOfTimes + 1, persistenceRequest))
       }
     }
+  }
+  
+  def replicateToNewAddedReplicas(addedReplicators: Set[ActorRef]) = {
+    addedReplicators.foreach(replicator =>
+      kv.foreach(item => {
+        val (k, v) = item
+        replicator ! Replicate(k, Some(v), -1)
+      }))
+  }
+  
+  def removeReplicasFromPendingList(removedReplicators: Set[ActorRef]) = {
+    removedReplicators.foreach { removedReplica =>
+      {
+        pendingReplicationAcks.foreach { item =>
+          val (id, (client, replicas)) = item
+          if (replicas.contains(removedReplica)) {
+            onReplicated(id, removedReplica)
+          }
+        }
+      }
+    }
+  }
+  
+  def stopRemovedReplicators(removedReplicators: Set[ActorRef]) = {
+    removedReplicators.foreach(context.stop(_))
+  }
+  
+  def onReplicated(id: Long, sender: ActorRef): Unit = {
+    if (pendingReplicationAcks.contains(id)
+      && pendingReplicationAcks(id)._2.contains(sender)) {
+      val (client, pendingRepAcks) = pendingReplicationAcks(id)
+      val newPendingRepAcks = pendingRepAcks - sender
+      if (newPendingRepAcks.isEmpty) {
+        pendingReplicationAcks -= id
+        if (isUpdateOnPrimaryReplicaSucceed(id)) {
+          client ! OperationAck(id)
+        }
+      } else {
+        pendingReplicationAcks = pendingReplicationAcks.updated(id, (client, newPendingRepAcks))
+      }
+    }    
   }
 }
