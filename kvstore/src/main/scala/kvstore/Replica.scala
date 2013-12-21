@@ -40,6 +40,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
   case class PersistenceTimeOut(seq: Long, nbrOfTimes: Int, persistenceRequest: Persist)
+  case class ReplyIfOperationFailed(client: ActorRef, id: Long)
   
   var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
@@ -50,6 +51,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var currentExpectedSeq = 0
   // map from sequence number to pair of sender and response
   var pendingPersistenceAcks = Map.empty[Long, (ActorRef, Object, Object)]
+  // map from sequence number to pair of sender and child replicators
+  var pendingReplicationAcks = Map.empty[Long, (ActorRef, Set[ActorRef])]
+  
+  var isPrimary = false
   
   override val supervisorStrategy = OneForOneStrategy(maxNrOfRetries = 5) {
     case _: Exception =>  {SupervisorStrategy.Restart}
@@ -60,32 +65,80 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   arbiter ! Join
 
   def receive = {
-    case JoinedPrimary   => context.become(leader)
-    case JoinedSecondary => context.become(replica)
+    case JoinedPrimary   => {
+      isPrimary = true
+      context.become(leader)
+    }
+    case JoinedSecondary => {
+      isPrimary = false
+      context.become(replica)
+    }
   }
 
-  /* TODO Behavior for  the leader role. */
   val leader: Receive = {
+    case Replicas(replicas) => {
+      replicas filter(_  != self) foreach ( replica =>
+        secondaries = secondaries.updated(replica, context.actorOf(Replicator.props(replica)))
+      )
+    }
     case Insert(key, value, id) => {
       kv = kv.updated(key, value)
       pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
-          (sender, OperationAck(id), OperationFailed(id)))
+          (sender, OperationAck(id), ReplyIfOperationFailed(sender, id)))
+      replicators = secondaries.values.toSet
+      if (!replicators.isEmpty)
+      {
+        pendingReplicationAcks += ((id, (sender, replicators)))
+      }
       self ! PersistenceTimeOut(id, 0, Persist(key, Some(value), id))
+      secondaries.values.foreach(_ ! Replicate(key, Some(value), id))
+      context.system.scheduler.scheduleOnce(1 second, self,
+          ReplyIfOperationFailed(sender, id))
     }
     case Remove(key, id) => {
       kv -= key
       pendingPersistenceAcks = pendingPersistenceAcks.updated(id,
-          (sender, OperationAck(id), OperationFailed(id)))
+          (sender, OperationAck(id), ReplyIfOperationFailed(sender, id)))
+      replicators = secondaries.values.toSet
+      if (!replicators.isEmpty)
+      {
+        pendingReplicationAcks += ((id, (sender, replicators)))
+      }
       self ! PersistenceTimeOut(id, 0, Persist(key, None, id))
+      secondaries.values.foreach(_ ! Replicate(key, None, id))
+      context.system.scheduler.scheduleOnce(1 second, self,
+          ReplyIfOperationFailed(sender, id))
     }
     case Get(key, id) => onGet(key, id)
     case Terminated(_) => onTerminated
     case Persisted(key, id) => onPersistenceCompleted(key, id)
     case PersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
       => onPersistenceTimeOut(id, nbrOfTimes, Persist(key, valueOption, opId))
+    case Replicated(key, id) => {
+      if (pendingReplicationAcks.contains(id)
+          && pendingReplicationAcks(id)._2.contains(sender)) {
+        val (client, pendingRepAcks) = pendingReplicationAcks(id)
+        val newPendingRepAcks = pendingRepAcks - sender
+        if (newPendingRepAcks.isEmpty) {
+          pendingReplicationAcks -= id
+          if (isUpdateOnPrimaryReplicaSucceed(id)) {
+            client ! OperationAck(id)
+          }
+        } else {
+          pendingReplicationAcks 
+            = pendingReplicationAcks.updated(id, (client, newPendingRepAcks))
+        }
+      }
+    }
+    case ReplyIfOperationFailed(client, id) => {
+      if (!isUpdateOnPrimaryReplicaSucceed(id)) {
+        pendingPersistenceAcks -= id
+        pendingReplicationAcks -= id
+        client ! OperationFailed(id)
+      }
+    }
   }
 
-  /* TODO Behavior for the replica role. */
   val replica: Receive = {
     case Snapshot(key, valueOption, seq) => {
       if (seq > currentExpectedSeq) {
@@ -121,20 +174,28 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   
   def onPersistenceCompleted(key: String, id: Long): Unit = {
     if (pendingPersistenceAcks.contains(id)) {
-      val (sender, ack, failResponse) = pendingPersistenceAcks(id)
+      val (client, ack, failResponse) = pendingPersistenceAcks(id)
       pendingPersistenceAcks -= id
-      sender ! ack
+      if (!isPrimary || isUpdateOnPrimaryReplicaSucceed(id)) {
+        client ! ack
+      }
     }
+  }
+  
+  def isUpdateOnPrimaryReplicaSucceed(id: Long): Boolean = {
+    !pendingPersistenceAcks.contains(id) &&
+    !pendingReplicationAcks.contains(id)
   }
   
   def onPersistenceTimeOut(id: Long, nbrOfTimes: Int,
                            persistenceRequest: Persist): Unit = {
     if (pendingPersistenceAcks.contains(id)) {
-      val (sender, ack, failResponse) = pendingPersistenceAcks(id)
+      val (client, ack, failResponse) = pendingPersistenceAcks(id)
       if (nbrOfTimes >= 9) {
-        pendingPersistenceAcks -= id
         if (failResponse != null) {
-          sender ! failResponse
+          client ! failResponse
+        } else {
+          pendingPersistenceAcks -= id
         }
       }
       else {
