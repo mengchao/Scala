@@ -153,11 +153,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             case Some(value) => kv = kv.updated(key, value)
             case None => kv -= key
           }
-          currentExpectedSeq += 1
-        }
-        pendingPersistenceAcks =
+          pendingPersistenceAcks =
           pendingPersistenceAcks.updated(seq, (sender, SnapshotAck(key, seq), None))
-        self ! PersistenceTimeOut(seq, 0, Persist(key, valueOption, seq))
+          self ! PersistenceTimeOut(seq, 0, Persist(key, valueOption, seq))
+        } else {
+          sender ! SnapshotAck(key, seq)
+        }
+        
       }
     }
     case Get(key, id) => onGet(key, id)
@@ -181,6 +183,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       val (client, ack, failResponse) = pendingPersistenceAcks(id)
       pendingPersistenceAcks -= id
       if (!isPrimary || isUpdateOnPrimaryReplicaSucceed(id)) {
+        if (!isPrimary) {
+          currentExpectedSeq += 1
+        }
         client ! ack
         clearSucceedHistoricalSnapshots(id)
       }
@@ -276,8 +281,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             && s.id <= id)
           if (restoreSnapshotValueBefore) {
             valueBefore match {
-              case Some(value) => self ! Insert(key, value, -1)
-              case None => self ! Remove(key, -1)
+              case Some(value) => kv = kv.updated(key, value)
+              case None => kv -= key
             }
           }
         }
