@@ -109,13 +109,17 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   def onReplicas(replicas: Set[ActorRef]): Unit = {
     val oldReplicators = secondaries.values.toSet
     
-    secondaries = Map.empty[ActorRef, ActorRef]
-    replicas filter (_ != self) foreach (replica =>
-      secondaries += (replica -> context.actorOf(Replicator.props(replica))))
+    secondaries = secondaries.filter(_ match {case (k, v) => replicas.contains(k)})
+    replicas filter (_ != self) foreach (replica => {
+      if (!secondaries.contains(replica)) {
+        secondaries += (replica -> context.actorOf(Replicator.props(replica)))
+      }
+    })
     replicators = secondaries.values.toSet
     
-    val removedReplicators = oldReplicators.filter(!replicators.contains(_))
-    val addedReplicators = replicators.filter(!oldReplicators.contains(_))
+    val removedReplicators = oldReplicators.filterNot(replicators.contains(_))
+    val addedReplicators = replicators.filterNot(oldReplicators.contains(_))
+    
     replicateToNewAddedReplicas(addedReplicators)
     removeReplicasFromPendingList(removedReplicators)
     stopRemovedReplicators(removedReplicators)    
