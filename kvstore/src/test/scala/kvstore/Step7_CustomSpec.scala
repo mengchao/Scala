@@ -6,10 +6,10 @@ import kvstore.Arbiter.{Replicas, JoinedSecondary, JoinedPrimary, Join}
 import org.scalatest.matchers.ShouldMatchers
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
-import org.junit.runner.RunWith  
-import org.scalatest.junit.JUnitRunner
+//import org.junit.runner.RunWith  
+//import org.scalatest.junit.JUnitRunner
 
-@RunWith(classOf[JUnitRunner])
+//@RunWith(classOf[JUnitRunner])
 class Step7_CustomSpec
   extends TestKit(ActorSystem("Step7CustomSpec"))
   with FunSuite
