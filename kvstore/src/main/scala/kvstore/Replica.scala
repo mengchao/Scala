@@ -222,6 +222,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         case Some(value) => kv = kv.updated(key, value)
         case None => kv -= key
       }
+      currentExpectedSeq += 1
       pendingPersistenceAcks +=
         (seq -> (sender, SnapshotAck(key, seq), None))
       self ! PersistenceTimeOut(seq, 0, Persist(key, valueOption, seq))
@@ -243,9 +244,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       val (client, ack, failResponse) = pendingPersistenceAcks(id)
       pendingPersistenceAcks -= id
       if (!isPrimary || isUpdateOnPrimaryReplicaSucceed(id)) {
-        if (!isPrimary) {
-          currentExpectedSeq += 1
-        }
         client ! ack
         clearSucceededHistoricalSnapshots(id)
       }
